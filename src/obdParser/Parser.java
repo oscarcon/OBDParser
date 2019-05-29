@@ -84,7 +84,6 @@ public class Parser {
 			objectNode.put(Service01.Description(response.pid), value);
 		}
 		json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(objectNode);
-		System.out.println(json);
 		return json;
 	}
 }
