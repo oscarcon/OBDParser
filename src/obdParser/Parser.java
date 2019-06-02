@@ -22,68 +22,81 @@ public class Parser {
 	public Parser() {
 	}
 	
-	// load the format of OBD-II standard
-//	public int LoadFormat(final String csvPath) throws IOException {
-//		try (
-//			Reader reader = Files.newBufferedReader(Paths.get(csvPath));
-//			CSVReader csvReader = new CSVReaderBuilder(reader).withSkipLines(1).build();
-//		) {
-//			String[] nextRecord;
-//			while ((nextRecord = csvReader.readNext()) != null) {
-//				Dictionary<String, String> dict = new Hashtable<String, String>();
-//				dict.put("pid", nextRecord[0]);
-//				dict.put("bytes", nextRecord[1]);
-//				dict.put("description", nextRecord[2]);
-//				dict.put("supported", nextRecord[3]);
-//				dict.put("min", nextRecord[4]);
-//				dict.put("max", nextRecord[5]);
-//				dict.put("unit", nextRecord[6]);
-//				dict.put("formula", nextRecord[7]);
-//				format.add(dict);
-//			}
-//		}
-//		return 0;
-//	}
-	
 	// parse the response
-	public String DecodeResponse(Response response) throws JsonProcessingException {
+	public String ParseSingleResponse(String response) throws JsonProcessingException {
 		ObjectMapper mapper = new ObjectMapper();
 		ObjectNode objectNode = mapper.createObjectNode();
 		String json = "";
-		String data = response.data.replaceAll(" ", "");
+		response = response.replace(" ", "");
+		
+		int id = Integer.parseInt(response.substring(0,2), 16) - 0x40;
+		int pid = Integer.parseInt(response.substring(2,4), 16);
+		String data = response.substring(4);
+		
 		bytes = new int[data.length()/2];
 		for (int i = 0; i < data.length()/2; i++) {
 			bytes[i] = Integer.parseInt(data.substring(2*i,2*i+2), 16);
 		}
-		if (data.length()/2 != Service01.Bytes(response.pid)) {
+		if (data.length()/2 != Service01.Bytes(pid)) {
 			System.out.println("Error: incorrect format");
 			return "";
 		}
 		// handling special case of PIDs
-		if (Service01.Formula(response.pid).startsWith("#")) {
-			if (response.pid == 0) {
-				for (int i = 0; i < 0x1f; i++) {
-					String key = Service01.Description(i + 1);
-					int value = (bytes[i/8] << i%8) & 0x80;
-					objectNode.put(key, value/128);
+		if (id == 1) {
+			if (Service01.Formula(pid).startsWith("#")) {
+				if (pid == 0) {
+					for (int i = 0; i < 0x1f; i++) {
+						String key = Service01.Description(i + 1);
+						int value = (bytes[i/8] << i%8) & 0x80;
+						objectNode.put(key, value/128);
+					}
+				}
+				if (pid == 1) {
+					
 				}
 			}
-			if (response.pid == 1) {
-				
+			else {
+				String exprString = new String(Service01.Formula(pid));
+				for (char c = 'A'; c < 'A' + Service01.Bytes(pid); c++) {
+					int index = 0;
+					exprString = exprString.replaceAll(Character.toString(c), Integer.toString(bytes[index]));
+					index++;
+				}
+				Expression expr = new ExpressionBuilder(exprString).build();
+				double value = expr.evaluate();
+				objectNode.put(Service01.Description(pid), value);
 			}
+			json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(objectNode);
 		}
-		else {
-			String expString = new String(Service01.Formula(response.pid));
-			for (char c = 'A'; c < 'A' + Service01.Bytes(response.pid); c++) {
-				int index = 0;
-				expString = expString.replaceAll(Character.toString(c), Integer.toString(bytes[index]));
-				index++;
-			}
-			Expression exp = new ExpressionBuilder(expString).build();
-			double value = exp.evaluate();
-			objectNode.put(Service01.Description(response.pid), value);
-		}
-		json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(objectNode);
 		return json;
 	}
+	public String ParseMultiReponses(Response response) throws IOException {
+		ObjectMapper mapper = new ObjectMapper();
+		ArrayNode arrayNode = mapper.createArrayNode();
+		for (String line : response.responseList) {
+			ObjectNode objectNode = mapper.createObjectNode();
+			String[] words = line.split(" ");
+			int length = Integer.parseInt(words[1], 16);
+			objectNode.put("ECU", words[0]);
+			for (int i = 3; i < length + 3 - 1;) {
+				int val = Integer.parseInt(words[i], 16);
+					int numOfBytes = Service01.Bytes(val);
+					String str = words[2];
+					for (int k = i; k <= i + numOfBytes; k++) {
+						str += words[k];
+					}
+					if (val == 0) {
+						System.out.println("Shouldn't put PID 00 in multiple responses mode.");
+						System.out.println("Auto Ignore PID 00");
+					}
+					else {
+						objectNode.setAll((ObjectNode) mapper.readTree(this.ParseSingleResponse(str)));
+					}
+					i += numOfBytes + 1;
+			}
+			arrayNode.add(objectNode);
+		}
+		return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(arrayNode);
+	}
+	
 }

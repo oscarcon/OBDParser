@@ -6,5 +6,4 @@ public class CarInfor {
 	int service;
 	int pid;
 	String description;
-	
 }
